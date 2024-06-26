@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alexbrainman/odbc/api"
+	"github.com/popeliv/odbc/api"
 )
 
 var (
