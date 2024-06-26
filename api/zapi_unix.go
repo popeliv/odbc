@@ -5,6 +5,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:build (darwin || linux || freebsd) && cgo
 // +build darwin linux freebsd
 // +build cgo
 
@@ -122,5 +123,10 @@ func SQLSetEnvAttr(environmentHandle SQLHENV, attribute SQLINTEGER, valuePtr SQL
 
 func SQLSetConnectAttr(connectionHandle SQLHDBC, attribute SQLINTEGER, valuePtr SQLPOINTER, stringLength SQLINTEGER) (ret SQLRETURN) {
 	r := C.SQLSetConnectAttrW(C.SQLHDBC(connectionHandle), C.SQLINTEGER(attribute), C.SQLPOINTER(valuePtr), C.SQLINTEGER(stringLength))
+	return SQLRETURN(r)
+}
+
+func SQLCancel(statementHandle SQLHSTMT) (ret SQLRETURN) {
+	r := C.SQLCancel(C.SQLHSTMT(statementHandle))
 	return SQLRETURN(r)
 }
