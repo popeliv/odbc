@@ -6,6 +6,7 @@ package odbc
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"database/sql/driver"
 	"errors"
@@ -230,6 +231,22 @@ func exec(t *testing.T, db *sql.DB, query string) {
 	}
 	defer s.Close()
 	r, err := s.Exec()
+	if err != nil {
+		t.Fatalf("s.Exec(%q ...) failed: %v", query, err)
+	}
+	_, err = r.RowsAffected()
+	if err != nil {
+		t.Fatalf("r.RowsAffected(%q ...) failed: %v", query, err)
+	}
+}
+
+func execContext(t *testing.T, ctx context.Context, db *sql.DB, query string) {
+	s, err := db.PrepareContext(ctx, query)
+	if err != nil {
+		t.Fatalf("db.Prepare(%q) failed: %v", query, err)
+	}
+	defer s.Close()
+	r, err := s.ExecContext(ctx)
 	if err != nil {
 		t.Fatalf("s.Exec(%q ...) failed: %v", query, err)
 	}
@@ -1915,5 +1932,58 @@ IF @@ROWCOUNT = 0
 
 	if err = tx.Commit(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestMSSQLContextTimeout(t *testing.T) {
+	db, sc, err := mssqlConnect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeDB(t, db, sc, sc)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Microsecond*1)
+	defer cancel()
+
+	err = db.PingContext(ctx)
+
+	// Context should timeout after 1 microsecond, the ping should return a deadline error
+	if err == nil {
+		t.Fatal("Unexpected success, expected error")
+	}
+	if err != context.DeadlineExceeded {
+		t.Fatalf("Unexpected error value: should=%s, is=%s", context.DeadlineExceeded, err)
+	}
+}
+
+func TestMSSQLQueryContextTimeout(t *testing.T) {
+	db, sc, err := mssqlConnect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeDB(t, db, sc, sc)
+
+	contextTimeout := time.Millisecond * 500
+	queryWaitFor := time.Second * 1
+
+	ctx, cancel := context.WithTimeout(context.Background(), contextTimeout)
+	defer cancel()
+
+	start := time.Now()
+	_, err = db.QueryContext(ctx, "WAITFOR DELAY '00:01';")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("Unexpected success, expected error")
+	}
+	if err != context.DeadlineExceeded {
+		t.Fatalf("Unexpected error value: should=%s, is=%s", context.DeadlineExceeded, err)
+	}
+
+	if elapsed > queryWaitFor {
+		t.Fatalf("Unexpected query duration: should=>%s, is=%s", queryWaitFor, elapsed)
+	}
+	if elapsed < contextTimeout {
+		t.Fatalf("Query did not delay: should=<%s, is=%s", contextTimeout, elapsed)
 	}
 }
