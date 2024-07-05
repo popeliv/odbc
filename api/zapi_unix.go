@@ -130,3 +130,8 @@ func SQLCancel(statementHandle SQLHSTMT) (ret SQLRETURN) {
 	r := C.SQLCancel(C.SQLHSTMT(statementHandle))
 	return SQLRETURN(r)
 }
+
+func SQLExecDirect(statementHandle SQLHSTMT, statementText *SQLWCHAR, textLength SQLINTEGER) (ret SQLRETURN) {
+	r := C.SQLExecDirectW(C.SQLHSTMT(statementHandle), (*C.SQLWCHAR)(unsafe.Pointer(statementText)), C.SQLINTEGER(textLength))
+	return SQLRETURN(r)
+}

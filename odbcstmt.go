@@ -17,8 +17,12 @@ import (
 
 // TODO(brainman): see if I could use SQLExecDirect anywhere
 
+type SQLStmt struct {
+	handle api.SQLHSTMT
+}
+
 type ODBCStmt struct {
-	h          api.SQLHSTMT
+	SQLStmt
 	Parameters []Parameter
 	Cols       []Column
 	// locking/lifetime
@@ -27,7 +31,7 @@ type ODBCStmt struct {
 	usedByRows bool
 }
 
-func (c *Conn) PrepareODBCStmt(query string) (*ODBCStmt, error) {
+func (c *Conn) AllocODBCStmt() (*SQLStmt, error) {
 	var out api.SQLHANDLE
 	ret := api.SQLAllocHandle(api.SQL_HANDLE_STMT, api.SQLHANDLE(c.h), &out)
 	if IsError(ret) {
@@ -38,20 +42,59 @@ func (c *Conn) PrepareODBCStmt(query string) (*ODBCStmt, error) {
 	if err != nil {
 		return nil, err
 	}
+	return &SQLStmt{h}, nil
+}
+
+func (s *SQLStmt) ExecDirect(query string, args []driver.Value, conn *Conn) (driver.Result, error) {
+	stmtText := api.StringToUTF16(query)
+
+	params := make([]Parameter, len(args))
+
+	if err := s.bindParams(params, args, conn); err != nil {
+		defer releaseHandle(s.handle)
+		return nil, err
+	}
+
+	ret := api.SQLExecDirect(s.handle, (*api.SQLWCHAR)(unsafe.Pointer(&stmtText[0])), api.SQL_NTS)
+	if IsError(ret) {
+		defer releaseHandle(s.handle)
+		return nil, NewError("SQLExecDirect", s.handle)
+	}
+
+	var sumRowCount int64
+	for {
+		var len api.SQLLEN
+		ret := api.SQLRowCount(s.handle, &len)
+		if IsError(ret) {
+			return nil, NewError("SQLRowCount", s.handle)
+		}
+		sumRowCount += int64(len)
+		if ret = api.SQLMoreResults(s.handle); ret == api.SQL_NO_DATA {
+			break
+		}
+	}
+	return &Result{rowCount: sumRowCount}, nil
+}
+
+func (c *Conn) PrepareODBCStmt(query string) (*ODBCStmt, error) {
+	sqlStmt, err := c.AllocODBCStmt()
+	if err != nil {
+		return nil, err
+	}
 
 	b := api.StringToUTF16(query)
-	ret = api.SQLPrepare(h, (*api.SQLWCHAR)(unsafe.Pointer(&b[0])), api.SQL_NTS)
+	ret := api.SQLPrepare(sqlStmt.handle, (*api.SQLWCHAR)(unsafe.Pointer(&b[0])), api.SQL_NTS)
 	if IsError(ret) {
-		defer releaseHandle(h)
-		return nil, c.newError("SQLPrepare", h)
+		defer releaseHandle(sqlStmt.handle)
+		return nil, c.newError("SQLPrepare", sqlStmt.handle)
 	}
-	ps, err := ExtractParameters(h)
+	ps, err := ExtractParameters(sqlStmt.handle)
 	if err != nil {
-		defer releaseHandle(h)
+		defer releaseHandle(sqlStmt.handle)
 		return nil, err
 	}
 	return &ODBCStmt{
-		h:          h,
+		SQLStmt:    *sqlStmt,
 		Parameters: ps,
 		usedByStmt: true,
 	}, nil
@@ -75,9 +118,9 @@ func (s *ODBCStmt) closeByRows() error {
 	if s.usedByRows {
 		defer func() { s.usedByRows = false }()
 		if s.usedByStmt {
-			ret := api.SQLCloseCursor(s.h)
+			ret := api.SQLCloseCursor(s.SQLStmt.handle)
 			if IsError(ret) {
-				return NewError("SQLCloseCursor", s.h)
+				return NewError("SQLCloseCursor", s.SQLStmt.handle)
 			}
 			return nil
 		} else {
@@ -87,17 +130,17 @@ func (s *ODBCStmt) closeByRows() error {
 	return nil
 }
 
-func (s *ODBCStmt) releaseHandle() error {
-	h := s.h
-	s.h = api.SQLHSTMT(api.SQL_NULL_HSTMT)
+func (s *SQLStmt) releaseHandle() error {
+	h := s.handle
+	s.handle = api.SQLHSTMT(api.SQL_NULL_HSTMT)
 	return releaseHandle(h)
 }
 
 var testingIssue5 bool // used during tests
 
-func (s *ODBCStmt) Exec(args []driver.Value, conn *Conn) error {
-	if len(args) != len(s.Parameters) {
-		return fmt.Errorf("wrong number of arguments %d, %d expected", len(args), len(s.Parameters))
+func (s *SQLStmt) bindParams(params []Parameter, args []driver.Value, conn *Conn) error {
+	if len(args) != len(params) {
+		return fmt.Errorf("wrong number of arguments %d, %d expected", len(args), len(params))
 	}
 	for i, a := range args {
 		// this could be done in 2 steps:
@@ -105,20 +148,27 @@ func (s *ODBCStmt) Exec(args []driver.Value, conn *Conn) error {
 		// 2) set their (vars) values here;
 		// but rebinding parameters for every new parameter value
 		// should be efficient enough for our purpose.
-		if err := s.Parameters[i].BindValue(s.h, i, a, conn); err != nil {
+		if err := params[i].BindValue(s.handle, i, a, conn); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (s *ODBCStmt) Exec(args []driver.Value, conn *Conn) error {
+	if err := s.bindParams(s.Parameters, args, conn); err != nil {
+		return err
 	}
 	if testingIssue5 {
 		time.Sleep(10 * time.Microsecond)
 	}
-	ret := api.SQLExecute(s.h)
+	ret := api.SQLExecute(s.SQLStmt.handle)
 	if ret == api.SQL_NO_DATA {
 		// success but no data to report
 		return nil
 	}
 	if IsError(ret) {
-		return NewError("SQLExecute", s.h)
+		return NewError("SQLExecute", s.SQLStmt.handle)
 	}
 	return nil
 }
@@ -126,9 +176,9 @@ func (s *ODBCStmt) Exec(args []driver.Value, conn *Conn) error {
 func (s *ODBCStmt) BindColumns() error {
 	// count columns
 	var n api.SQLSMALLINT
-	ret := api.SQLNumResultCols(s.h, &n)
+	ret := api.SQLNumResultCols(s.SQLStmt.handle, &n)
 	if IsError(ret) {
-		return NewError("SQLNumResultCols", s.h)
+		return NewError("SQLNumResultCols", s.SQLStmt.handle)
 	}
 	if n < 1 {
 		return errors.New("Stmt did not create a result set")
@@ -137,18 +187,18 @@ func (s *ODBCStmt) BindColumns() error {
 	s.Cols = make([]Column, n)
 	binding := true
 	for i := range s.Cols {
-		c, err := NewColumn(s.h, i)
+		c, err := NewColumn(s.SQLStmt.handle, i)
 		if err != nil {
 			return err
 		}
 		s.Cols[i] = c
 		// Once we found one non-bindable column, we will not bind the rest.
-		// http://www.easysoft.com/developer/languages/c/odbc-tutorial-fetching-results.html
+		// http://www.easysoft.com/developer/languages/c/odbc-tutorial-fetching-results.SQLStmt.handletml
 		// ... One common restriction is that SQLGetData may only be called on columns after the last bound column. ...
 		if !binding {
 			continue
 		}
-		bound, err := s.Cols[i].Bind(s.h, i)
+		bound, err := s.Cols[i].Bind(s.SQLStmt.handle, i)
 		if err != nil {
 			return err
 		}
@@ -159,10 +209,10 @@ func (s *ODBCStmt) BindColumns() error {
 	return nil
 }
 
-func (s *ODBCStmt) Cancel() error {
-	ret := api.SQLCancel(s.h)
+func (s *SQLStmt) Cancel() error {
+	ret := api.SQLCancel(s.handle)
 	if IsError(ret) {
-		return NewError("SQLCancel", s.h)
+		return NewError("SQLCancel", s.handle)
 	}
 
 	return nil

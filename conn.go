@@ -8,6 +8,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"strings"
 	"unsafe"
 
@@ -73,6 +74,57 @@ func (c *Conn) newError(apiName string, handle interface{}) error {
 		c.bad = true
 	}
 	return err
+}
+
+// ExecContext implements the driver.ExecerContext interface.
+// As per the specifications, it honours the context timeout and returns when the context is cancelled.
+// When the context is cancelled, it first cancels the statement, closes it, and then returns an error.
+func (c *Conn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	dargs, err := namedValueToValue(args)
+	if err != nil {
+		return nil, err
+	}
+
+	stmt, err := c.AllocODBCStmt()
+	if err != nil {
+		return nil, err
+	}
+
+	// Execute the statement
+	resultChan := make(chan driver.Result)
+	defer close(resultChan)
+	errorChan := make(chan error)
+	defer close(errorChan)
+
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+
+	go c.wrapExec(ctx, stmt, query, dargs, resultChan, errorChan)
+
+	var finalErr error
+	var finalRes driver.Result
+
+	select {
+	case <-ctx.Done():
+		fmt.Println("DONE", ctx)
+		if err := stmt.Cancel(); err != nil {
+			finalErr = err
+			break
+		}
+		<-errorChan
+		finalErr = ctx.Err()
+	case err := <-errorChan:
+		finalErr = err
+	case res := <-resultChan:
+		finalRes = res
+	}
+
+	// Close the statement
+	stmt.releaseHandle()
+	stmt = nil
+
+	return finalRes, finalErr
 }
 
 // QueryContext implements the driver.QueryerContext interface.
@@ -152,6 +204,22 @@ func (c *Conn) wrapQuery(ctx context.Context, os *ODBCStmt, dargs []driver.Value
 	if ctx.Err() != nil {
 		errorChan <- ctx.Err()
 	}
+}
+
+func (c *Conn) wrapExec(ctx context.Context, stmt *SQLStmt, query string, args []driver.Value, resultChan chan<- driver.Result, errorChan chan<- error) {
+	res, err := stmt.ExecDirect(query, args, c)
+
+	if err != nil {
+		errorChan <- err
+		return
+	}
+
+	resultChan <- res
+
+	if ctx.Err() != nil {
+		errorChan <- ctx.Err()
+	}
+	return
 }
 
 // namedValueToValue is a utility function that converts a driver.NamedValue into a driver.Value.

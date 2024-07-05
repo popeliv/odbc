@@ -1987,3 +1987,27 @@ func TestMSSQLQueryContextTimeout(t *testing.T) {
 		t.Fatalf("Query did not delay: should=<%s, is=%s", contextTimeout, elapsed)
 	}
 }
+
+func TestMSSQLExecContextTimeout(t *testing.T) {
+	contextTimeout := time.Microsecond * 1
+
+	db, sc, err := mssqlConnect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeDB(t, db, sc, sc)
+
+	// create table
+	db.Exec("drop table dbo.temp")
+
+	ctx, cancel := context.WithTimeout(context.Background(), contextTimeout)
+	defer cancel()
+
+	_, err = db.ExecContext(ctx, "create table dbo.temp (id int, a varchar(255)")
+	if err == nil {
+		t.Fatal("Unexpected success, expected error")
+	}
+	if err != context.DeadlineExceeded {
+		t.Fatalf("Unexpected error value: should=%s, is=%s", context.DeadlineExceeded, err)
+	}
+}

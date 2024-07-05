@@ -50,6 +50,7 @@ var (
 	procSQLDisconnect      = mododbc32.NewProc("SQLDisconnect")
 	procSQLDriverConnectW  = mododbc32.NewProc("SQLDriverConnectW")
 	procSQLEndTran         = mododbc32.NewProc("SQLEndTran")
+	procSQLExecDirectW     = mododbc32.NewProc("SQLExecDirectW")
 	procSQLExecute         = mododbc32.NewProc("SQLExecute")
 	procSQLFetch           = mododbc32.NewProc("SQLFetch")
 	procSQLFreeHandle      = mododbc32.NewProc("SQLFreeHandle")
@@ -120,6 +121,12 @@ func SQLDriverConnect(connectionHandle SQLHDBC, windowHandle SQLHWND, inConnecti
 
 func SQLEndTran(handleType SQLSMALLINT, handle SQLHANDLE, completionType SQLSMALLINT) (ret SQLRETURN) {
 	r0, _, _ := syscall.Syscall(procSQLEndTran.Addr(), 3, uintptr(handleType), uintptr(handle), uintptr(completionType))
+	ret = SQLRETURN(r0)
+	return
+}
+
+func SQLExecDirect(statementHandle SQLHSTMT, statementText *SQLWCHAR, textLength SQLINTEGER) (ret SQLRETURN) {
+	r0, _, _ := syscall.Syscall(procSQLExecDirectW.Addr(), 3, uintptr(statementHandle), uintptr(unsafe.Pointer(statementText)), uintptr(textLength))
 	ret = SQLRETURN(r0)
 	return
 }

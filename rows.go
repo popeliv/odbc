@@ -24,15 +24,15 @@ func (r *Rows) Columns() []string {
 }
 
 func (r *Rows) Next(dest []driver.Value) error {
-	ret := api.SQLFetch(r.os.h)
+	ret := api.SQLFetch(r.os.SQLStmt.handle)
 	if ret == api.SQL_NO_DATA {
 		return io.EOF
 	}
 	if IsError(ret) {
-		return NewError("SQLFetch", r.os.h)
+		return NewError("SQLFetch", r.os.SQLStmt.handle)
 	}
 	for i := range dest {
-		v, err := r.os.Cols[i].Value(r.os.h, i)
+		v, err := r.os.Cols[i].Value(r.os.SQLStmt.handle, i)
 		if err != nil {
 			return err
 		}
@@ -50,12 +50,12 @@ func (r *Rows) HasNextResultSet() bool {
 }
 
 func (r *Rows) NextResultSet() error {
-	ret := api.SQLMoreResults(r.os.h)
+	ret := api.SQLMoreResults(r.os.SQLStmt.handle)
 	if ret == api.SQL_NO_DATA {
 		return io.EOF
 	}
 	if IsError(ret) {
-		return NewError("SQLMoreResults", r.os.h)
+		return NewError("SQLMoreResults", r.os.SQLStmt.handle)
 	}
 
 	err := r.os.BindColumns()
