@@ -8,7 +8,6 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
-	"fmt"
 	"strings"
 	"unsafe"
 
@@ -107,7 +106,6 @@ func (c *Conn) ExecContext(ctx context.Context, query string, args []driver.Name
 
 	select {
 	case <-ctx.Done():
-		fmt.Println("DONE", ctx)
 		if err := stmt.Cancel(); err != nil {
 			finalErr = err
 			break
