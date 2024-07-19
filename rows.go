@@ -15,6 +15,10 @@ type Rows struct {
 	os *ODBCStmt
 }
 
+func (r *Rows) ColumnTypeNullable(idx int) (nullable bool, ok bool) {
+	return r.os.Cols[idx].Nullable()
+}
+
 func (r *Rows) ColumnTypeDatabaseTypeName(idx int) string {
 	return r.os.Cols[idx].DatabaseTypeName()
 }

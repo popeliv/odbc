@@ -27,6 +27,9 @@ const (
 	SQL_NO_TOTAL           = -4
 	SQL_NTS                = -3
 	SQL_MAX_MESSAGE_LENGTH = 512
+	SQL_NO_NULLS           = 0
+	SQL_NULLABLE           = 1
+	SQL_NULLABLE_UNKNOWN   = 2
 	SQL_NULL_HANDLE        = 0
 	SQL_NULL_HENV          = 0
 	SQL_NULL_HDBC          = 0
