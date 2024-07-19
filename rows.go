@@ -15,6 +15,10 @@ type Rows struct {
 	os *ODBCStmt
 }
 
+func (r *Rows) ColumnTypeDatabaseTypeName(idx int) string {
+	return r.os.Cols[idx].DatabaseTypeName()
+}
+
 func (r *Rows) Columns() []string {
 	names := make([]string, len(r.os.Cols))
 	for i := 0; i < len(names); i++ {
